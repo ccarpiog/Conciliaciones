@@ -1,0 +1,7 @@
+{
+  "timeZone": "Atlantic/Canary",
+  "dependencies": {
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8"
+}

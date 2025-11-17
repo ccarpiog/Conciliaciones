@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #ffffff;
+    }
+
+    h3 {
+      color: #1a73e8;
+      margin-top: 0;
+      margin-bottom: 20px;
+    }
+
+    .config-form {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .form-group label {
+      font-size: 14px;
+      font-weight: 500;
+      color: #3c4043;
+    }
+
+    .form-group input {
+      padding: 8px 12px;
+      border: 1px solid #dadce0;
+      border-radius: 4px;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: #1a73e8;
+      box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.1);
+    }
+
+    .help-text {
+      font-size: 12px;
+      color: #5f6368;
+      margin-top: -4px;
+    }
+
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .slider {
+      flex: 1;
+      -webkit-appearance: none;
+      height: 4px;
+      background: #dadce0;
+      outline: none;
+      transition: background 0.2s;
+    }
+
+    .slider:hover {
+      background: #c5c5c5;
+    }
+
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      background: #1a73e8;
+      cursor: pointer;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+
+    .slider::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      background: #1a73e8;
+      cursor: pointer;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+
+    .slider-value {
+      min-width: 40px;
+      text-align: center;
+      font-size: 14px;
+      font-weight: 500;
+      color: #1a73e8;
+    }
+
+    .button-container {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      justify-content: flex-end;
+    }
+
+    .btn {
+      padding: 8px 20px;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-primary {
+      background: #1a73e8;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #1765cc;
+    }
+
+    .btn-primary:disabled {
+      background: #dadce0;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: #ffffff;
+      color: #5f6368;
+      border: 1px solid #dadce0;
+    }
+
+    .btn-secondary:hover {
+      background: #f8f9fa;
+    }
+
+    .status-message {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+      font-size: 13px;
+      display: none;
+    }
+
+    .status-success {
+      background: #e6f4ea;
+      color: #0d652d;
+      border: 1px solid #34a853;
+      display: block;
+    }
+
+    .status-error {
+      background: #fce8e6;
+      color: #c5221f;
+      border: 1px solid #ea4335;
+      display: block;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #5f6368;
+    }
+
+    .info-box {
+      background: #f8f9fa;
+      border-left: 3px solid #1a73e8;
+      padding: 12px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: #5f6368;
+    }
+  </style>
+</head>
+<body>
+  <div id="status-message" class="status-message"></div>
+
+  <h3>Configuración de Conciliación</h3>
+
+  <div class="info-box">
+    Ajuste los parámetros para controlar cómo se emparejan los movimientos durante la conciliación automática.
+  </div>
+
+  <div id="content" class="loading">Cargando configuración...</div>
+
+  <script>
+    let currentConfig = {};
+
+    // Load configuration on startup
+    google.script.run
+      .withSuccessHandler(displayConfig)
+      .withFailureHandler(showError)
+      .getConfig();
+
+    function displayConfig(config) {
+      currentConfig = config;
+
+      const content = document.getElementById('content');
+      content.innerHTML = `
+        <div class="config-form">
+          <div class="form-group">
+            <label for="date-tolerance">Tolerancia de fechas (días)</label>
+            <div class="slider-container">
+              <input type="range" id="date-tolerance" class="slider"
+                     min="0" max="10" value="${config.dateToleranceDays}"
+                     oninput="updateSliderValue('date-tolerance', this.value)">
+              <span class="slider-value" id="date-tolerance-value">${config.dateToleranceDays}</span>
+            </div>
+            <span class="help-text">
+              Número máximo de días de diferencia permitidos entre las fechas de movimientos contables y bancarios.
+              Un valor de 0 significa que las fechas deben coincidir exactamente.
+            </span>
+          </div>
+
+          <div class="form-group">
+            <label for="similarity-score">Puntuación mínima de similitud (%)</label>
+            <div class="slider-container">
+              <input type="range" id="similarity-score" class="slider"
+                     min="0" max="100" value="${Math.round(config.minSimilarityScore * 100)}"
+                     oninput="updateSliderValue('similarity-score', this.value)">
+              <span class="slider-value" id="similarity-score-value">${Math.round(config.minSimilarityScore * 100)}%</span>
+            </div>
+            <span class="help-text">
+              Puntuación mínima requerida para considerar una coincidencia automática.
+              Valores más altos requieren mayor similitud entre conceptos.
+              Recomendado: 30-50% para mayor flexibilidad.
+            </span>
+          </div>
+
+          <div class="form-group">
+            <label>Criterios de conciliación</label>
+            <div style="background: #f8f9fa; padding: 10px; border-radius: 4px;">
+              <div style="margin-bottom: 8px;">
+                <strong>✓ Obligatorio:</strong> Los importes deben coincidir exactamente
+              </div>
+              <div style="margin-bottom: 8px;">
+                <strong>○ Fecha:</strong> Dentro de la tolerancia configurada (peso: 30%)
+              </div>
+              <div>
+                <strong>○ Concepto:</strong> Similitud basada en texto y números (peso: 70%)
+              </div>
+            </div>
+          </div>
+
+          <div class="button-container">
+            <button class="btn btn-secondary" onclick="resetDefaults()">
+              Valores por defecto
+            </button>
+            <button class="btn btn-secondary" onclick="google.script.host.close()">
+              Cancelar
+            </button>
+            <button class="btn btn-primary" onclick="saveConfiguration()">
+              Guardar
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function updateSliderValue(sliderId, value) {
+      const displayValue = sliderId === 'similarity-score' ? value + '%' : value;
+      document.getElementById(sliderId + '-value').textContent = displayValue;
+    }
+
+    function saveConfiguration() {
+      const config = {
+        dateToleranceDays: document.getElementById('date-tolerance').value,
+        minSimilarityScore: document.getElementById('similarity-score').value / 100
+      };
+
+      // Disable save button
+      const saveBtn = document.querySelector('.btn-primary');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Guardando...';
+
+      google.script.run
+        .withSuccessHandler(() => {
+          showSuccess('Configuración guardada exitosamente');
+          setTimeout(() => {
+            google.script.host.close();
+          }, 1500);
+        })
+        .withFailureHandler((error) => {
+          showError(error);
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Guardar';
+        })
+        .saveConfig(config);
+    }
+
+    function resetDefaults() {
+      document.getElementById('date-tolerance').value = 3;
+      document.getElementById('date-tolerance-value').textContent = '3';
+      document.getElementById('similarity-score').value = 30;
+      document.getElementById('similarity-score-value').textContent = '30%';
+    }
+
+    function showSuccess(message) {
+      const statusDiv = document.getElementById('status-message');
+      statusDiv.className = 'status-message status-success';
+      statusDiv.textContent = message;
+      setTimeout(() => {
+        statusDiv.className = 'status-message';
+      }, 3000);
+    }
+
+    function showError(error) {
+      const statusDiv = document.getElementById('status-message');
+      statusDiv.className = 'status-message status-error';
+      statusDiv.textContent = 'Error: ' + error.toString();
+    }
+  </script>
+</body>
+</html>

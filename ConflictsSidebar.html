@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 10px;
+      background: #f5f5f5;
+    }
+
+    .conflict-container {
+      background: white;
+      border-radius: 5px;
+      padding: 15px;
+      margin-bottom: 15px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .accounting-info {
+      background: #e8f0fe;
+      padding: 10px;
+      border-radius: 3px;
+      margin-bottom: 10px;
+    }
+
+    .accounting-info h4 {
+      margin: 0 0 10px 0;
+      color: #1a73e8;
+      font-size: 14px;
+    }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 5px 0;
+      font-size: 13px;
+    }
+
+    .candidates-section {
+      margin-top: 15px;
+    }
+
+    .candidates-section h4 {
+      font-size: 14px;
+      color: #5f6368;
+      margin-bottom: 10px;
+    }
+
+    .candidate {
+      background: #f8f9fa;
+      border: 1px solid #dadce0;
+      border-radius: 3px;
+      padding: 10px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+    }
+
+    .candidate:hover {
+      background: #e8f0fe;
+      border-color: #1a73e8;
+    }
+
+    .candidate.selected {
+      background: #cfe9ff;
+      border-color: #1a73e8;
+      border-width: 2px;
+    }
+
+    .score-badge {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: #34a853;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: bold;
+    }
+
+    .score-badge.medium {
+      background: #fbbc04;
+    }
+
+    .score-badge.low {
+      background: #ea4335;
+    }
+
+    .candidate-info {
+      font-size: 12px;
+      margin-right: 50px;
+    }
+
+    .button-container {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-primary {
+      background: #1a73e8;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #1765cc;
+    }
+
+    .btn-primary:disabled {
+      background: #dadce0;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: #ffffff;
+      color: #5f6368;
+      border: 1px solid #dadce0;
+    }
+
+    .btn-secondary:hover {
+      background: #f8f9fa;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #5f6368;
+    }
+
+    .no-conflicts {
+      text-align: center;
+      padding: 40px 20px;
+      color: #5f6368;
+    }
+
+    .no-conflicts .icon {
+      font-size: 48px;
+      margin-bottom: 10px;
+    }
+
+    .status-message {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
+
+    .status-success {
+      background: #e6f4ea;
+      color: #0d652d;
+      border: 1px solid #34a853;
+    }
+
+    .status-error {
+      background: #fce8e6;
+      color: #c5221f;
+      border: 1px solid #ea4335;
+    }
+  </style>
+</head>
+<body>
+  <div id="content">
+    <div class="loading">Cargando conflictos...</div>
+  </div>
+
+  <script>
+    let conflicts = [];
+    let selectedMatches = {};
+
+    // HTML escape function to prevent XSS
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Load conflicts on startup
+    google.script.run
+      .withSuccessHandler(displayConflicts)
+      .withFailureHandler(showError)
+      .getConflictsData();
+
+    function displayConflicts(data) {
+      conflicts = data;
+      const content = document.getElementById('content');
+
+      if (!conflicts || conflicts.length === 0) {
+        content.innerHTML = `
+          <div class="no-conflicts">
+            <div class="icon">✓</div>
+            <h3>No hay conflictos</h3>
+            <p>Todos los movimientos se han conciliado automáticamente o no hay datos para procesar.</p>
+          </div>
+        `;
+        return;
+      }
+
+      let html = '<h3>Conflictos de Conciliación</h3>';
+      html += '<p style="font-size: 13px; color: #5f6368;">Seleccione el movimiento bancario correcto para cada movimiento contable:</p>';
+
+      conflicts.forEach((conflict, index) => {
+        html += `
+          <div class="conflict-container">
+            <div class="accounting-info">
+              <h4>Movimiento Contable</h4>
+              <div class="info-row">
+                <span><strong>Fecha:</strong> ${escapeHtml(conflict.accounting.date)}</span>
+                <span><strong>Asiento:</strong> ${escapeHtml(conflict.accounting.entry || 'N/A')}</span>
+              </div>
+              <div class="info-row">
+                <span><strong>Concepto:</strong> ${escapeHtml(conflict.accounting.concept)}</span>
+              </div>
+              <div class="info-row">
+                <span><strong>Importe:</strong> ${formatCurrency(conflict.accounting.amount)}</span>
+              </div>
+            </div>
+
+            <div class="candidates-section">
+              <h4>Candidatos Bancarios (seleccione uno):</h4>
+              ${conflict.candidates.map((candidate, candIndex) => `
+                <div class="candidate" onclick="selectCandidate(${index}, ${candIndex}, '${escapeHtml(candidate.id)}')"
+                     id="candidate-${index}-${candIndex}">
+                  <span class="score-badge ${getScoreClass(candidate.score)}">${candidate.score}%</span>
+                  <div class="candidate-info">
+                    <div><strong>Fecha:</strong> ${escapeHtml(candidate.date)}</div>
+                    <div><strong>Concepto:</strong> ${escapeHtml(candidate.concept)}</div>
+                    ${candidate.additional ? `<div><strong>Datos adicionales:</strong> ${escapeHtml(candidate.additional)}</div>` : ''}
+                    <div><strong>Importe:</strong> ${formatCurrency(candidate.amount)}</div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+
+            <div class="button-container">
+              <button class="btn btn-primary" id="match-btn-${index}" onclick="confirmMatch(${index})" disabled>
+                Confirmar Conciliación
+              </button>
+              <button class="btn btn-secondary" onclick="skipConflict(${index})">
+                Omitir
+              </button>
+            </div>
+          </div>
+        `;
+      });
+
+      html += `
+        <div class="button-container" style="margin-top: 20px;">
+          <button class="btn btn-primary" onclick="applyAllMatches()">
+            Aplicar Todas las Conciliaciones
+          </button>
+          <button class="btn btn-secondary" onclick="refreshConflicts()">
+            Actualizar
+          </button>
+        </div>
+      `;
+
+      content.innerHTML = html;
+    }
+
+    function selectCandidate(conflictIndex, candidateIndex, bankId) {
+      // Clear previous selection for this conflict
+      const candidates = document.querySelectorAll(`[id^="candidate-${conflictIndex}-"]`);
+      candidates.forEach(c => c.classList.remove('selected'));
+
+      // Select this candidate
+      document.getElementById(`candidate-${conflictIndex}-${candidateIndex}`).classList.add('selected');
+
+      // Enable the confirm button
+      document.getElementById(`match-btn-${conflictIndex}`).disabled = false;
+
+      // Store the selection
+      selectedMatches[conflictIndex] = {
+        accountingId: conflicts[conflictIndex].accounting.id,
+        bankId: bankId,
+        candidateIndex: candidateIndex
+      };
+    }
+
+    function confirmMatch(conflictIndex) {
+      const match = selectedMatches[conflictIndex];
+      if (!match) return;
+
+      const btn = document.getElementById(`match-btn-${conflictIndex}`);
+      btn.disabled = true;
+      btn.textContent = 'Procesando...';
+
+      google.script.run
+        .withSuccessHandler(() => {
+          showSuccessMessage(`Conflicto ${conflictIndex + 1} resuelto`);
+          // Mark this conflict as resolved
+          document.querySelector(`.conflict-container:nth-child(${conflictIndex + 3})`).style.opacity = '0.5';
+          btn.textContent = '✓ Conciliado';
+        })
+        .withFailureHandler((error) => {
+          showError(error);
+          btn.disabled = false;
+          btn.textContent = 'Confirmar Conciliación';
+        })
+        .resolveConflict(match.accountingId, match.bankId);
+    }
+
+    function skipConflict(conflictIndex) {
+      delete selectedMatches[conflictIndex];
+      // Clear selection
+      const candidates = document.querySelectorAll(`[id^="candidate-${conflictIndex}-"]`);
+      candidates.forEach(c => c.classList.remove('selected'));
+      document.getElementById(`match-btn-${conflictIndex}`).disabled = true;
+    }
+
+    function applyAllMatches() {
+      const matchCount = Object.keys(selectedMatches).length;
+      if (matchCount === 0) {
+        alert('No hay conciliaciones seleccionadas');
+        return;
+      }
+
+      if (!confirm(`¿Desea aplicar ${matchCount} conciliaciones?`)) {
+        return;
+      }
+
+      // Apply all matches
+      let completed = 0;
+      Object.entries(selectedMatches).forEach(([index, match]) => {
+        google.script.run
+          .withSuccessHandler(() => {
+            completed++;
+            if (completed === matchCount) {
+              showSuccessMessage(`Se aplicaron ${matchCount} conciliaciones exitosamente`);
+              setTimeout(refreshConflicts, 2000);
+            }
+          })
+          .withFailureHandler(showError)
+          .resolveConflict(match.accountingId, match.bankId);
+      });
+    }
+
+    function refreshConflicts() {
+      document.getElementById('content').innerHTML = '<div class="loading">Actualizando...</div>';
+      google.script.run
+        .withSuccessHandler(displayConflicts)
+        .withFailureHandler(showError)
+        .getConflictsData();
+    }
+
+    function formatCurrency(amount) {
+      return new Intl.NumberFormat('es-ES', {
+        style: 'currency',
+        currency: 'EUR'
+      }).format(amount);
+    }
+
+    function getScoreClass(score) {
+      if (score >= 70) return '';
+      if (score >= 40) return 'medium';
+      return 'low';
+    }
+
+    function showSuccessMessage(message) {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'status-message status-success';
+      msgDiv.textContent = message;
+      document.getElementById('content').insertBefore(msgDiv, document.getElementById('content').firstChild);
+      setTimeout(() => msgDiv.remove(), 3000);
+    }
+
+    function showError(error) {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'status-message status-error';
+      msgDiv.textContent = 'Error: ' + error.toString();
+      document.getElementById('content').insertBefore(msgDiv, document.getElementById('content').firstChild);
+    }
+  </script>
+</body>
+</html>

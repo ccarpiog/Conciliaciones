@@ -39,6 +39,7 @@ function onOpen() {
     .addItem('Configurar parámetros', 'showConfigDialog')
     .addSeparator()
     .addItem('Limpiar hoja de salida', 'clearOutputSheet')
+    .addItem('Borrar conciliaciones manuales', 'clearManualMatchesWithConfirm')
     .addToUi();
 }
 
@@ -90,16 +91,25 @@ function getAccountingData(sheet) {
 
   return values
     .filter(row => row[CONFIG.ACCOUNTING.DATE_COL] && row[CONFIG.ACCOUNTING.AMOUNT_COL])
-    .map((row, index) => ({
-      id: `ACC_${index + 2}`, // Row number in sheet
-      date: new Date(row[CONFIG.ACCOUNTING.DATE_COL]),
-      entryNumber: row[CONFIG.ACCOUNTING.ENTRY_COL],
-      concept: String(row[CONFIG.ACCOUNTING.CONCEPT_COL] || ''),
-      amount: Number(row[CONFIG.ACCOUNTING.AMOUNT_COL]),
-      rowNumber: index + 2,
-      matched: false,
-      bankMatches: []
-    }));
+    .map((row, index) => {
+      // Create stable ID based on date, entry number, and amount
+      const date = new Date(row[CONFIG.ACCOUNTING.DATE_COL]);
+      const dateStr = date.getTime();
+      const entry = String(row[CONFIG.ACCOUNTING.ENTRY_COL] || '');
+      const amount = Number(row[CONFIG.ACCOUNTING.AMOUNT_COL]);
+      const id = `ACC_${dateStr}_${entry}_${amount}`;
+
+      return {
+        id,
+        date,
+        entryNumber: row[CONFIG.ACCOUNTING.ENTRY_COL],
+        concept: String(row[CONFIG.ACCOUNTING.CONCEPT_COL] || ''),
+        amount,
+        rowNumber: index + 2,
+        matched: false,
+        bankMatches: []
+      };
+    });
 }
 
 /**
@@ -114,16 +124,27 @@ function getBankData(sheet) {
 
   return values
     .filter(row => row[0] && row[4]) // Check date and amount exist
-    .map((row, index) => ({
-      id: `BANK_${index + 2}`,
-      date: new Date(row[0]), // Movement date (F)
-      valueDate: row[1] ? new Date(row[1]) : null, // Value date (G)
-      concept: String(row[2] || ''), // Concept (H)
-      additional: String(row[3] || ''), // Additional data (I)
-      amount: Number(row[4]), // Amount (J)
-      rowNumber: index + 2,
-      matched: false
-    }));
+    .map((row, index) => {
+      // Create stable ID based on date, concept, and amount
+      const date = new Date(row[0]);
+      const dateStr = date.getTime();
+      const concept = String(row[2] || '');
+      const amount = Number(row[4]);
+      // Include first 20 chars of concept to differentiate same-day same-amount transactions
+      const conceptKey = concept.substring(0, 20).replace(/[^a-zA-Z0-9]/g, '');
+      const id = `BANK_${dateStr}_${conceptKey}_${amount}`;
+
+      return {
+        id,
+        date,
+        valueDate: row[1] ? new Date(row[1]) : null, // Value date (G)
+        concept, // Concept (H)
+        additional: String(row[3] || ''), // Additional data (I)
+        amount,
+        rowNumber: index + 2,
+        matched: false
+      };
+    });
 }
 
 /**
@@ -137,8 +158,38 @@ function reconcileMovements(accountingData, bankData) {
     unmatchedBank: [...bankData] // Start with all bank movements as unmatched
   };
 
+  // Get manual matches
+  const manualMatches = getManualMatches();
+
   // Process each accounting movement
   accountingData.forEach(accMovement => {
+    // Check if there's a manual match for this accounting movement
+    if (manualMatches[accMovement.id]) {
+      const manualBankId = manualMatches[accMovement.id];
+      const manualMatch = bankData.find(b => b.id === manualBankId);
+
+      if (manualMatch && !manualMatch.matched) {
+        // Apply manual match
+        results.matched.push({
+          accounting: accMovement,
+          bank: manualMatch,
+          score: 1.0, // Manual matches have perfect score
+          autoMatched: false,
+          manualMatch: true
+        });
+
+        // Mark as matched
+        accMovement.matched = true;
+        manualMatch.matched = true;
+
+        // Remove from unmatched bank list
+        const index = results.unmatchedBank.findIndex(b => b.id === manualMatch.id);
+        if (index > -1) results.unmatchedBank.splice(index, 1);
+
+        return; // Skip automatic matching
+      }
+    }
+
     // Find potential matches in bank data (same amount is mandatory)
     // Round to 2 decimals for exact comparison (handling floating-point precision)
     const accAmount = Math.round(accMovement.amount * 100) / 100;
@@ -371,6 +422,9 @@ function outputReconciliationResults(sheet, results) {
 
   // Add matched movements
   results.matched.forEach(match => {
+    const status = match.manualMatch ? '✓ Manual' : '✓ Conciliado';
+    const scoreDisplay = match.manualMatch ? 'Manual' : Math.round(match.score * 100) + '%';
+
     allMovements.push({
       date: match.accounting.date,
       entryNumber: match.accounting.entryNumber,
@@ -379,14 +433,14 @@ function outputReconciliationResults(sheet, results) {
         match.accounting.entryNumber,
         match.accounting.concept,
         match.accounting.amount,
-        '✓ Conciliado',
+        status,
         formatDate(match.bank.date),
         match.bank.valueDate ? formatDate(match.bank.valueDate) : '',
         match.bank.concept,
         match.bank.additional,
-        Math.round(match.score * 100) + '%'
+        scoreDisplay
       ],
-      type: 'matched'
+      type: match.manualMatch ? 'manual' : 'matched'
     });
   });
 
@@ -463,6 +517,9 @@ function outputReconciliationResults(sheet, results) {
     switch(movement.type) {
       case 'matched':
         rowRange.setBackground('#d9ead3');
+        break;
+      case 'manual':
+        rowRange.setBackground('#b7e1cd'); // Slightly darker green for manual matches
         break;
       case 'conflict':
         rowRange.setBackground('#fff2cc');
@@ -578,10 +635,59 @@ function getConflictsData() {
  * Resolves a conflict by manually matching movements
  */
 function resolveConflict(accountingId, bankId) {
-  // This would update the matching and re-run the output
-  // Implementation would depend on how you want to store manual matches
+  // Store the manual match in document properties (shared across all users)
+  const documentProperties = PropertiesService.getDocumentProperties();
+  const manualMatches = JSON.parse(documentProperties.getProperty('manualMatches') || '{}');
+
+  // Store the match (accounting ID -> bank ID)
+  manualMatches[accountingId] = bankId;
+
+  // Save back to properties
+  documentProperties.setProperty('manualMatches', JSON.stringify(manualMatches));
+
   SpreadsheetApp.getActiveSpreadsheet().toast('Conflicto resuelto', 'Éxito', 3);
   return true;
+}
+
+/**
+ * Gets all manual matches
+ */
+function getManualMatches() {
+  const documentProperties = PropertiesService.getDocumentProperties();
+  return JSON.parse(documentProperties.getProperty('manualMatches') || '{}');
+}
+
+/**
+ * Clears all manual matches
+ */
+function clearManualMatches() {
+  const documentProperties = PropertiesService.getDocumentProperties();
+  documentProperties.deleteProperty('manualMatches');
+}
+
+/**
+ * Clears manual matches with user confirmation
+ */
+function clearManualMatchesWithConfirm() {
+  const ui = SpreadsheetApp.getUi();
+  const manualMatches = getManualMatches();
+  const matchCount = Object.keys(manualMatches).length;
+
+  if (matchCount === 0) {
+    ui.alert('No hay conciliaciones manuales', 'No hay conciliaciones manuales guardadas para borrar.', ui.ButtonSet.OK);
+    return;
+  }
+
+  const response = ui.alert(
+    'Borrar conciliaciones manuales',
+    `Hay ${matchCount} ${matchCount === 1 ? 'conciliación manual' : 'conciliaciones manuales'} guardadas.\n\n¿Desea borrarlas? Esta acción no se puede deshacer.`,
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    clearManualMatches();
+    ui.alert('Conciliaciones borradas', 'Las conciliaciones manuales han sido borradas. Ejecute la conciliación de nuevo para ver los cambios.', ui.ButtonSet.OK);
+  }
 }
 
 /**

@@ -406,7 +406,7 @@
 
       html += `
         <div class="button-container" style="margin-top: 20px;">
-          <button class="btn btn-primary" onclick="applyAllMatches()">
+          <button class="btn btn-primary" id="apply-all-btn" onclick="applyAllMatches()" disabled>
             Aplicar Todas las Conciliaciones
           </button>
           <button class="btn btn-secondary" onclick="refreshConflicts()">
@@ -435,6 +435,9 @@
         bankId: bankId,
         candidateIndex: candidateIndex
       };
+
+      // Update the "Apply All" button state
+      updateApplyAllButton();
     }
 
     function confirmMatch(conflictIndex) {
@@ -472,6 +475,16 @@
       const candidates = document.querySelectorAll(`[id^="candidate-${conflictIndex}-"]`);
       candidates.forEach(c => c.classList.remove('selected'));
       document.getElementById(`match-btn-${conflictIndex}`).disabled = true;
+
+      // Update the "Apply All" button state
+      updateApplyAllButton();
+    }
+
+    function updateApplyAllButton() {
+      const applyAllBtn = document.getElementById('apply-all-btn');
+      if (applyAllBtn) {
+        applyAllBtn.disabled = Object.keys(selectedMatches).length === 0;
+      }
     }
 
     function applyAllMatches() {
@@ -546,9 +559,10 @@
       // Update confirm button handler
       const confirmBtn = document.getElementById('modalConfirmBtn');
       confirmBtn.onclick = () => {
+        const callback = confirmCallback;
         hideConfirmModal();
-        if (confirmCallback) {
-          confirmCallback();
+        if (callback) {
+          callback();
         }
       };
     }

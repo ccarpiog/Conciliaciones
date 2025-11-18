@@ -78,6 +78,9 @@ function runReconciliation() {
 
   // Show summary
   showReconciliationSummary(reconciliationResults);
+
+  // Automatically open conflicts sidebar to show results
+  showConflictsSidebar();
 }
 
 /**
@@ -536,12 +539,13 @@ function outputReconciliationResults(sheet, results) {
   // Add summary section for unmatched bank movements
   if (results.unmatchedBank.length > 0) {
     currentRow += 2;
-    sheet.getRange(currentRow, 1).setValue('MOVIMIENTOS BANCARIOS NO CONCILIADOS')
+    sheet.getRange(currentRow, 1, 1, 5)
+      .merge()
+      .setValue('MOVIMIENTOS BANCARIOS NO CONCILIADOS')
       .setBackground('#ea4335')
       .setFontColor('#ffffff')
-      .setFontWeight('bold');
-
-    sheet.getRange(currentRow, 1, 1, 5).merge();
+      .setFontWeight('bold')
+      .setHorizontalAlignment('center');
     currentRow++;
 
     sheet.getRange(currentRow, 1, 1, 5).setValues([
@@ -563,6 +567,9 @@ function outputReconciliationResults(sheet, results) {
 
   // Auto-resize columns
   sheet.autoResizeColumns(1, 10);
+
+  // Set column A width to 100 pixels
+  sheet.setColumnWidth(1, 100);
 }
 
 /**
@@ -595,6 +602,19 @@ function showReconciliationSummary(results) {
  * Shows conflicts sidebar for manual resolution
  */
 function showConflictsSidebar() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const outputSheet = ss.getSheetByName(CONFIG.OUTPUT_SHEET);
+
+  // Check if reconciliation has been run (output sheet has content beyond row 1)
+  if (!outputSheet || outputSheet.getLastRow() <= 1) {
+    SpreadsheetApp.getUi().alert(
+      'Conciliación no ejecutada',
+      'Debe ejecutar "Ejecutar conciliación automática" antes de revisar conflictos.',
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    return;
+  }
+
   const html = HtmlService.createHtmlOutputFromFile('ConflictsSidebar')
     .setTitle('Resolver Conflictos')
     .setWidth(400);
@@ -771,6 +791,13 @@ function clearEverything() {
 
     // Clear manual matches
     clearManualMatches();
+
+    // Hide sidebar if it's open
+    try {
+      ui.showSidebar(HtmlService.createHtmlOutput(''));
+    } catch (e) {
+      // Sidebar may not be open, ignore error
+    }
 
     // Show success message
     ui.alert('Limpieza completada', 'La hoja de salida y las conciliaciones manuales han sido eliminadas.', ui.ButtonSet.OK);

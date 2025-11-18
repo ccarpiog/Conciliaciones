@@ -155,7 +155,7 @@ function getAccountingData(sheet) {
   const values = range.getValues();
 
   return values
-    .filter(row => row[CONFIG.ACCOUNTING.DATE_COL] && row[CONFIG.ACCOUNTING.AMOUNT_COL])
+    .filter(row => row[CONFIG.ACCOUNTING.DATE_COL] && row[CONFIG.ACCOUNTING.AMOUNT_COL] !== '' && row[CONFIG.ACCOUNTING.AMOUNT_COL] !== null)
     .map((row, index) => {
       // Create stable ID based on date, entry number, and amount
       const date = new Date(row[CONFIG.ACCOUNTING.DATE_COL]);
@@ -164,15 +164,20 @@ function getAccountingData(sheet) {
       const amount = parseSpanishNumber(row[CONFIG.ACCOUNTING.AMOUNT_COL]);
       const id = `ACC_${dateStr}_${entry}_${amount}`;
 
+      const concept = String(row[CONFIG.ACCOUNTING.CONCEPT_COL] || '');
+
       return {
         id,
         date,
         entryNumber: row[CONFIG.ACCOUNTING.ENTRY_COL],
-        concept: String(row[CONFIG.ACCOUNTING.CONCEPT_COL] || ''),
+        concept,
         amount,
         rowNumber: index + 2,
         matched: false,
-        bankMatches: []
+        bankMatches: [],
+        // Pre-compute normalized values for faster matching
+        _normalized: normalizeString(concept),
+        _numbers: extractNumbers(concept)
       };
     });
 }
@@ -188,50 +193,77 @@ function getBankData(sheet) {
   const values = range.getValues();
 
   return values
-    .filter(row => row[0] && row[4]) // Check date and amount exist
+    .filter(row => row[0] && row[4] !== '' && row[4] !== null) // Check date and amount exist (allow 0)
     .map((row, index) => {
       // Create stable ID based on date, concept, and amount
       const date = new Date(row[0]);
       const dateStr = date.getTime();
       const concept = String(row[2] || '');
+      const additional = String(row[3] || '');
       const amount = parseSpanishNumber(row[4]);
       // Include first 20 chars of concept to differentiate same-day same-amount transactions
       const conceptKey = concept.substring(0, 20).replace(/[^a-zA-Z0-9]/g, '');
       const id = `BANK_${dateStr}_${conceptKey}_${amount}`;
+
+      // Combine concept and additional for matching
+      const fullConcept = concept + ' ' + additional;
 
       return {
         id,
         date,
         valueDate: row[1] ? new Date(row[1]) : null, // Value date (G)
         concept, // Concept (H)
-        additional: String(row[3] || ''), // Additional data (I)
+        additional, // Additional data (I)
         amount,
         rowNumber: index + 2,
-        matched: false
+        matched: false,
+        // Pre-compute normalized values for faster matching
+        _fullConcept: fullConcept,
+        _normalized: normalizeString(fullConcept),
+        _numbers: extractNumbers(fullConcept)
       };
     });
 }
 
 /**
- * Main reconciliation logic
+ * Main reconciliation logic - optimized for large datasets
  */
 function reconcileMovements(accountingData, bankData) {
   const results = {
     matched: [],
     conflicts: [],
     unmatchedAccounting: [],
-    unmatchedBank: [...bankData] // Start with all bank movements as unmatched
+    unmatchedBank: new Set(bankData.map(b => b.id)) // Use Set for O(1) deletion
   };
 
   // Get manual matches
   const manualMatches = getManualMatches();
+
+  // Build index: amount -> array of bank movements (O(n) preprocessing)
+  const bankByAmount = new Map();
+  const bankById = new Map();
+
+  bankData.forEach(bankMovement => {
+    // Pre-calculate rounded amount and store it
+    bankMovement._roundedAmount = Math.round(bankMovement.amount * 100) / 100;
+
+    // Index by amount
+    const amountKey = bankMovement._roundedAmount;
+    if (!bankByAmount.has(amountKey)) {
+      bankByAmount.set(amountKey, []);
+    }
+    bankByAmount.get(amountKey).push(bankMovement);
+
+    // Index by ID for O(1) manual match lookup
+    bankById.set(bankMovement.id, bankMovement);
+  });
 
   // Process each accounting movement
   accountingData.forEach(accMovement => {
     // Check if there's a manual match for this accounting movement
     if (manualMatches[accMovement.id]) {
       const manualBankId = manualMatches[accMovement.id];
-      const manualMatch = bankData.find(b => b.id === manualBankId);
+      const manualMatch = bankById.get(manualBankId);
 
       if (manualMatch && !manualMatch.matched) {
         // Apply manual match
@@ -247,21 +279,18 @@ function reconcileMovements(accountingData, bankData) {
         accMovement.matched = true;
         manualMatch.matched = true;
 
-        // Remove from unmatched bank list
-        const index = results.unmatchedBank.findIndex(b => b.id === manualMatch.id);
-        if (index > -1) results.unmatchedBank.splice(index, 1);
+        // Remove from unmatched set (O(1))
+        results.unmatchedBank.delete(manualMatch.id);
 
         return; // Skip automatic matching
       }
     }
 
-    // Find potential matches in bank data (same amount is mandatory)
-    // Round to 2 decimals for exact comparison (handling floating-point precision)
+    // Find potential matches using amount index (O(k) where k is # with same amount)
     const accAmount = Math.round(accMovement.amount * 100) / 100;
-    const potentialMatches = bankData.filter(bankMovement => {
-      const bankAmount = Math.round(bankMovement.amount * 100) / 100;
-      return !bankMovement.matched && accAmount === bankAmount;
-    });
+    const candidatesForAmount = bankByAmount.get(accAmount) || [];
+
+    const potentialMatches = candidatesForAmount.filter(bankMovement => !bankMovement.matched);
 
     if (potentialMatches.length === 0) {
       // No matches found
@@ -278,15 +307,19 @@ function reconcileMovements(accountingData, bankData) {
     // Sort by score (highest first)
     scoredMatches.sort((a, b) => b.score - a.score);
 
-    if (scoredMatches.length === 1 ||
-        (scoredMatches[0].score > CONFIG.MIN_SIMILARITY_SCORE &&
-         scoredMatches[0].score - (scoredMatches[1]?.score || 0) > 0.2)) {
-      // Clear winner - automatic match
+    // Auto-match only if best score meets threshold AND is a clear winner
+    const bestScore = scoredMatches[0].score;
+    const secondScore = scoredMatches[1]?.score || 0;
+    const isAboveThreshold = bestScore > CONFIG.MIN_SIMILARITY_SCORE;
+    const isClearWinner = scoredMatches.length === 1 || (bestScore - secondScore > 0.2);
+
+    if (isAboveThreshold && isClearWinner) {
+      // Clear winner with good score - automatic match
       const bestMatch = scoredMatches[0].bankMovement;
       results.matched.push({
         accounting: accMovement,
         bank: bestMatch,
-        score: scoredMatches[0].score,
+        score: bestScore,
         autoMatched: true
       });
 
@@ -294,24 +327,36 @@ function reconcileMovements(accountingData, bankData) {
       accMovement.matched = true;
       bestMatch.matched = true;
 
-      // Remove from unmatched bank list
-      const index = results.unmatchedBank.findIndex(b => b.id === bestMatch.id);
-      if (index > -1) results.unmatchedBank.splice(index, 1);
+      // Remove from unmatched set (O(1))
+      results.unmatchedBank.delete(bestMatch.id);
     } else {
       // Multiple candidates or low confidence - needs manual review
+      let reason;
+      if (!isAboveThreshold) {
+        reason = 'Baja confianza';
+      } else if (scoredMatches.length > 1) {
+        reason = 'Múltiples candidatos';
+      } else {
+        reason = 'Baja confianza';
+      }
+
       results.conflicts.push({
         accounting: accMovement,
         candidates: scoredMatches.slice(0, 5), // Keep top 5 candidates
-        reason: scoredMatches.length > 1 ? 'Múltiples candidatos' : 'Baja confianza'
+        reason
       });
     }
   });
+
+  // Convert unmatchedBank Set back to array
+  results.unmatchedBank = bankData.filter(b => results.unmatchedBank.has(b.id));
 
   return results;
 }
 
 /**
  * Calculates match score between accounting and bank movements
+ * Uses pre-computed normalized values for performance
  */
 function calculateMatchScore(accMovement, bankMovement) {
   let score = 0;
@@ -328,14 +373,79 @@ function calculateMatchScore(accMovement, bankMovement) {
     score += weights.dateMatch * (1 - dateDiff / (CONFIG.DATE_TOLERANCE_DAYS * 2));
   }
 
-  // Concept similarity scoring
-  const conceptSimilarity = calculateConceptSimilarity(
-    accMovement.concept,
-    bankMovement.concept + ' ' + bankMovement.additional
-  );
+  // Concept similarity scoring using cached normalized values
+  const conceptSimilarity = calculateConceptSimilarityCached(accMovement, bankMovement);
   score += weights.conceptSimilarity * conceptSimilarity;
 
   return score;
+}
+
+/**
+ * Calculates similarity using pre-computed normalized values
+ * Much faster than calculateConceptSimilarity for large datasets
+ */
+function calculateConceptSimilarityCached(accMovement, bankMovement) {
+  // Use pre-computed normalized strings
+  const norm1 = accMovement._normalized;
+  const norm2 = bankMovement._normalized;
+
+  if (!norm1 || !norm2) return 0;
+
+  // Exact match
+  if (norm1 === norm2) return 1;
+
+  // Check if one contains the other
+  if (norm1.includes(norm2) || norm2.includes(norm1)) {
+    return 0.8;
+  }
+
+  // Use pre-computed numbers
+  const numbers1 = accMovement._numbers;
+  const numbers2 = bankMovement._numbers;
+
+  if (numbers1.length > 0 && numbers2.length > 0) {
+    // First check for exact matches
+    const commonNumbers = numbers1.filter(n => numbers2.includes(n));
+    if (commonNumbers.length > 0) {
+      return 0.6 + (0.3 * commonNumbers.length / Math.max(numbers1.length, numbers2.length));
+    }
+
+    // Check for partial matches (e.g., "661112" contains "1112")
+    for (const num1 of numbers1) {
+      for (const num2 of numbers2) {
+        // Check if one number is a substring of the other (minimum 3 digits)
+        if (num1.length >= 3 && num2.length >= 3) {
+          if (num1.includes(num2) || num2.includes(num1)) {
+            return 0.65;
+          }
+          // Check for trailing match (e.g., "661112" ends with "1112")
+          if (num1.length >= 4 && num2.length >= 3) {
+            if (num1.endsWith(num2) || num2.endsWith(num1)) {
+              return 0.7;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Token-based similarity (already normalized)
+  const tokens1 = norm1.split(/\s+/);
+  const tokens2 = norm2.split(/\s+/);
+  const commonTokens = tokens1.filter(t => tokens2.includes(t));
+
+  if (commonTokens.length > 0) {
+    return 0.3 + (0.4 * commonTokens.length / Math.max(tokens1.length, tokens2.length));
+  }
+
+  // Levenshtein distance for short strings only
+  if (norm1.length < 20 && norm2.length < 20) {
+    const distance = levenshteinDistance(norm1, norm2);
+    const maxLength = Math.max(norm1.length, norm2.length);
+    return Math.max(0, 1 - distance / maxLength) * 0.5;
+  }
+
+  return 0;
 }
 
 /**
@@ -572,30 +682,47 @@ function outputReconciliationResults(sheet, results) {
     return String(entryA || '').localeCompare(String(entryB || ''));
   });
 
-  // Output sorted movements
-  allMovements.forEach(movement => {
-    sheet.getRange(currentRow, 1, 1, movement.row.length).setValues([movement.row]);
+  // Output sorted movements - BATCH WRITE for performance
+  if (allMovements.length > 0) {
+    // Build data and background color arrays
+    const movementData = [];
+    const movementBackgrounds = [];
 
-    // Apply formatting based on type
-    const rowRange = sheet.getRange(currentRow, 1, 1, movement.row.length);
+    allMovements.forEach(movement => {
+      movementData.push(movement.row);
 
-    switch(movement.type) {
-      case 'matched':
-        rowRange.setBackground('#d9ead3');
-        break;
-      case 'manual':
-        rowRange.setBackground('#b7e1cd'); // Slightly darker green for manual matches
-        break;
-      case 'conflict':
-        rowRange.setBackground('#fff2cc');
-        break;
-      case 'unmatched':
-        rowRange.setBackground('#f4cccc');
-        break;
-    }
+      // Determine background color based on type
+      let bgColor;
+      switch(movement.type) {
+        case 'matched':
+          bgColor = '#d9ead3';
+          break;
+        case 'manual':
+          bgColor = '#b7e1cd'; // Slightly darker green for manual matches
+          break;
+        case 'conflict':
+          bgColor = '#fff2cc';
+          break;
+        case 'unmatched':
+          bgColor = '#f4cccc';
+          break;
+        default:
+          bgColor = '#ffffff';
+      }
 
-    currentRow++;
-  });
+      // Create array of same color for all columns in this row
+      const rowColors = new Array(movement.row.length).fill(bgColor);
+      movementBackgrounds.push(rowColors);
+    });
+
+    // Write all data in ONE operation
+    sheet.getRange(currentRow, 1, movementData.length, numColumns).setValues(movementData);
+
+    // Apply all backgrounds in ONE operation
+    sheet.getRange(currentRow, 1, movementBackgrounds.length, numColumns).setBackgrounds(movementBackgrounds);
+
+    currentRow += allMovements.length;
+  }
 
   // Add summary section for unmatched bank movements
   if (results.unmatchedBank.length > 0) {
@@ -614,16 +741,19 @@ function outputReconciliationResults(sheet, results) {
     ]).setBackground('#f4cccc').setFontWeight('bold');
     currentRow++;
 
-    results.unmatchedBank.forEach(bank => {
-      sheet.getRange(currentRow, 1, 1, 5).setValues([[
+    // BATCH WRITE for unmatched bank movements
+    if (results.unmatchedBank.length > 0) {
+      const bankData = results.unmatchedBank.map(bank => [
         formatDate(bank.date),
         bank.valueDate ? formatDate(bank.valueDate) : '',
         bank.concept,
         bank.additional,
         bank.amount
-      ]]);
-      currentRow++;
-    });
+      ]);
+
+      sheet.getRange(currentRow, 1, bankData.length, 5).setValues(bankData);
+      currentRow += bankData.length;
+    }
   }
 
   // Auto-resize columns

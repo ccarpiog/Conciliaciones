@@ -732,6 +732,59 @@ function resolveConflict(accountingId, bankId) {
 }
 
 /**
+ * Resolves multiple conflicts at once (batch operation)
+ * @param {Array<{accountingId: string, bankId: string}>} matches - Array of matches to resolve
+ */
+function resolveConflictsBatch(matches) {
+  // Validation
+  if (!matches || !Array.isArray(matches) || matches.length === 0) {
+    return { success: false, message: 'No hay conciliaciones para aplicar' };
+  }
+
+  // De-duplicate matches by accountingId (keep last occurrence)
+  const uniqueMatches = {};
+  matches.forEach(match => {
+    if (match && match.accountingId && match.bankId) {
+      uniqueMatches[match.accountingId] = match.bankId;
+    }
+  });
+
+  if (Object.keys(uniqueMatches).length === 0) {
+    return { success: false, message: 'No hay conciliaciones válidas para aplicar' };
+  }
+
+  // Acquire lock to prevent race conditions
+  const lock = LockService.getDocumentLock();
+  try {
+    // Wait up to 30 seconds for the lock
+    lock.waitLock(30000);
+  } catch (lockError) {
+    return { success: false, message: 'No se pudo obtener el bloqueo. Otro usuario podría estar aplicando conciliaciones. Intente de nuevo.' };
+  }
+
+  try {
+    // Store all manual matches in a single operation
+    const documentProperties = PropertiesService.getDocumentProperties();
+    const manualMatches = JSON.parse(documentProperties.getProperty('manualMatches') || '{}');
+
+    // Add all new matches
+    Object.keys(uniqueMatches).forEach(accountingId => {
+      manualMatches[accountingId] = uniqueMatches[accountingId];
+    });
+
+    // Save back to properties (single write operation)
+    documentProperties.setProperty('manualMatches', JSON.stringify(manualMatches));
+
+    return { success: true, count: Object.keys(uniqueMatches).length };
+  } catch (error) {
+    return { success: false, message: error.toString() };
+  } finally {
+    // Always release the lock
+    lock.releaseLock();
+  }
+}
+
+/**
  * Gets all manual matches
  */
 function getManualMatches() {

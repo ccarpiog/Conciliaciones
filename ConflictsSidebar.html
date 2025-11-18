@@ -501,46 +501,43 @@
           // Show loading state
           document.getElementById('content').innerHTML = '<div class="loading">Aplicando conciliaciones y actualizando resultados...</div>';
 
-          // Apply all matches
-          let completed = 0;
-          let failed = 0;
-          const totalMatches = Object.entries(selectedMatches);
+          // Convert selectedMatches to array format for batch operation
+          const matchesArray = Object.values(selectedMatches).map(match => ({
+            accountingId: match.accountingId,
+            bankId: match.bankId
+          }));
 
-          const checkCompletion = () => {
-            if (completed + failed === totalMatches.length) {
-              if (failed > 0) {
-                showError(`Se guardaron ${completed} conciliaciones, pero ${failed} fallaron. Actualizando hoja...`);
+          // Apply all matches in a single batch operation
+          google.script.run
+            .withSuccessHandler((result) => {
+              if (result.success) {
+                // Now re-run reconciliation once with all matches applied
+                google.script.run
+                  .withSuccessHandler(() => {
+                    showSuccessMessage(`Se aplicaron ${result.count} conciliaciones y se actualizó la hoja de salida`);
+                    // Clear selections
+                    selectedMatches = {};
+                    // Refresh conflicts list after a short delay
+                    setTimeout(refreshConflicts, 1500);
+                  })
+                  .withFailureHandler((error) => {
+                    // Reconciliation failed - show error and reload conflicts
+                    showError('Error al actualizar la hoja: ' + error.toString());
+                    setTimeout(refreshConflicts, 2000);
+                  })
+                  .runReconciliation();
+              } else {
+                // Batch operation failed - show error and reload conflicts
+                showError(result.message || 'Error al aplicar conciliaciones');
+                setTimeout(refreshConflicts, 2000);
               }
-              // Re-run reconciliation even if some failed (to apply the successful ones)
-              google.script.run
-                .withSuccessHandler(() => {
-                  const msg = failed > 0
-                    ? `Se aplicaron ${completed} conciliaciones (${failed} fallaron) y se actualizó la hoja`
-                    : `Se aplicaron ${matchCount} conciliaciones y se actualizó la hoja de salida`;
-                  showSuccessMessage(msg);
-                  // Clear selections
-                  selectedMatches = {};
-                  // Refresh conflicts list after a short delay
-                  setTimeout(refreshConflicts, 1500);
-                })
-                .withFailureHandler(showError)
-                .runReconciliation();
-            }
-          };
-
-          totalMatches.forEach(([index, match]) => {
-            google.script.run
-              .withSuccessHandler(() => {
-                completed++;
-                checkCompletion();
-              })
-              .withFailureHandler((error) => {
-                failed++;
-                console.error(`Failed to save match ${index}:`, error);
-                checkCompletion();
-              })
-              .resolveConflict(match.accountingId, match.bankId);
-          });
+            })
+            .withFailureHandler((error) => {
+              // Network or script error - show error and reload conflicts
+              showError('Error de conexión: ' + error.toString());
+              setTimeout(refreshConflicts, 2000);
+            })
+            .resolveConflictsBatch(matchesArray);
         }
       );
     }

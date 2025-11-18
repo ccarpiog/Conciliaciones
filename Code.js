@@ -40,6 +40,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Limpiar hoja de salida', 'clearOutputSheet')
     .addItem('Borrar conciliaciones manuales', 'clearManualMatchesWithConfirm')
+    .addItem('Limpiar todo', 'clearEverything')
     .addToUi();
 }
 
@@ -737,6 +738,42 @@ function clearOutputSheet() {
   if (outputSheet) {
     outputSheet.clear();
     SpreadsheetApp.getActiveSpreadsheet().toast('Hoja de salida limpiada', 'Éxito', 2);
+  }
+}
+
+/**
+ * Clears everything: output sheet and manual matches with user confirmation
+ */
+function clearEverything() {
+  const ui = SpreadsheetApp.getUi();
+  const manualMatches = getManualMatches();
+  const matchCount = Object.keys(manualMatches).length;
+
+  // Build confirmation message
+  let message = '¿Desea realizar las siguientes acciones?\n\n';
+  message += '• Limpiar la hoja de salida "Salida"\n';
+  message += `• Borrar ${matchCount} ${matchCount === 1 ? 'conciliación manual' : 'conciliaciones manuales'}\n\n`;
+  message += 'Esta acción no se puede deshacer.';
+
+  const response = ui.alert(
+    'Limpiar todo',
+    message,
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    // Clear output sheet
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const outputSheet = ss.getSheetByName(CONFIG.OUTPUT_SHEET);
+    if (outputSheet) {
+      outputSheet.clear();
+    }
+
+    // Clear manual matches
+    clearManualMatches();
+
+    // Show success message
+    ui.alert('Limpieza completada', 'La hoja de salida y las conciliaciones manuales han sido eliminadas.', ui.ButtonSet.OK);
   }
 }
 

@@ -82,6 +82,69 @@ function runReconciliation() {
 }
 
 /**
+ * Parses Spanish number format to standard number
+ * Converts Spanish format like "-1.750,00" to -1750.00
+ * @param {string|number} value - The value to parse
+ * @return {number} The parsed number
+ */
+function parseSpanishNumber(value) {
+  // If already a number, return it
+  if (typeof value === 'number') {
+    return value;
+  }
+
+  // Convert to string and trim
+  const str = String(value).trim();
+
+  // Remove thousands separators (dots)
+  // Replace decimal separator (comma) with dot
+  const normalized = str.replace(/\./g, '').replace(',', '.');
+
+  // Parse as float
+  const parsed = parseFloat(normalized);
+
+  // Return 0 if parsing failed
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Test function for Spanish number parsing
+ * Run this from the script editor to verify the parser works
+ */
+function testSpanishNumberParser() {
+  const tests = [
+    { input: '-1.750,00', expected: -1750.00 },
+    { input: '1.750,00', expected: 1750.00 },
+    { input: '750,00', expected: 750.00 },
+    { input: '-750,50', expected: -750.50 },
+    { input: '1.234.567,89', expected: 1234567.89 },
+    { input: 1750, expected: 1750 },
+    { input: '1750', expected: 1750 },
+    { input: '0,00', expected: 0 }
+  ];
+
+  let allPassed = true;
+  tests.forEach(test => {
+    const result = parseSpanishNumber(test.input);
+    const passed = Math.abs(result - test.expected) < 0.01;
+    if (!passed) {
+      Logger.log(`FAILED: parseSpanishNumber("${test.input}") = ${result}, expected ${test.expected}`);
+      allPassed = false;
+    } else {
+      Logger.log(`PASSED: parseSpanishNumber("${test.input}") = ${result}`);
+    }
+  });
+
+  if (allPassed) {
+    Logger.log('\n✓ All tests passed!');
+    SpreadsheetApp.getUi().alert('Test completado', 'Todos los tests de parseSpanishNumber pasaron correctamente.', SpreadsheetApp.getUi().ButtonSet.OK);
+  } else {
+    Logger.log('\n✗ Some tests failed');
+    SpreadsheetApp.getUi().alert('Test fallido', 'Algunos tests de parseSpanishNumber fallaron. Revise los logs.', SpreadsheetApp.getUi().ButtonSet.OK);
+  }
+}
+
+/**
  * Gets accounting data from columns A-D
  */
 function getAccountingData(sheet) {
@@ -98,7 +161,7 @@ function getAccountingData(sheet) {
       const date = new Date(row[CONFIG.ACCOUNTING.DATE_COL]);
       const dateStr = date.getTime();
       const entry = String(row[CONFIG.ACCOUNTING.ENTRY_COL] || '');
-      const amount = Number(row[CONFIG.ACCOUNTING.AMOUNT_COL]);
+      const amount = parseSpanishNumber(row[CONFIG.ACCOUNTING.AMOUNT_COL]);
       const id = `ACC_${dateStr}_${entry}_${amount}`;
 
       return {
@@ -131,7 +194,7 @@ function getBankData(sheet) {
       const date = new Date(row[0]);
       const dateStr = date.getTime();
       const concept = String(row[2] || '');
-      const amount = Number(row[4]);
+      const amount = parseSpanishNumber(row[4]);
       // Include first 20 chars of concept to differentiate same-day same-amount transactions
       const conceptKey = concept.substring(0, 20).replace(/[^a-zA-Z0-9]/g, '');
       const id = `BANK_${dateStr}_${conceptKey}_${amount}`;

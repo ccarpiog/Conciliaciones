@@ -38,8 +38,6 @@ function onOpen() {
     .addItem('Revisar conflictos', 'showConflictsSidebar')
     .addItem('Configurar parámetros', 'showConfigDialog')
     .addSeparator()
-    .addItem('Limpiar hoja de salida', 'clearOutputSheet')
-    .addItem('Borrar conciliaciones manuales', 'clearManualMatchesWithConfirm')
     .addItem('Limpiar todo', 'clearEverything')
     .addToUi();
 }

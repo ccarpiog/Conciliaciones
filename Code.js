@@ -632,9 +632,9 @@ function outputReconciliationResults(sheet, results) {
         '⚠ ' + conflict.reason,
         conflict.candidates.length + ' candidatos',
         '',
-        conflict.candidates[0].bankMovement.concept,
-        conflict.candidates[0].bankMovement.additional,
-        Math.round(conflict.candidates[0].score * 100) + '%'
+        '',
+        '',
+        ''
       ],
       type: 'conflict'
     });

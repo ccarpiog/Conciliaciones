@@ -150,14 +150,21 @@ El sistema detecta similitudes en los conceptos usando:
 #### 4. Criterios de Decisión
 
 **Conciliación Automática:**
-- Solo hay un candidato con el mismo importe, O
-- El mejor candidato tiene:
-  - Puntuación > 30% (configurable)
-  - Al menos 20 puntos más que el segundo mejor
+El sistema realiza conciliación automática solo cuando:
+- El mejor candidato tiene puntuación > 30% (umbral configurable), **Y**
+- La diferencia con el segundo mejor candidato es > 20 puntos porcentuales, **O**
+- Solo hay un único candidato con el mismo importe
 
-**Conflicto (Revisión Manual):**
-- Múltiples candidatos con puntuaciones similares
-- Puntuación del mejor candidato < 30%
+**Conflicto - Baja Confianza:**
+Requiere revisión manual cuando:
+- El mejor candidato tiene puntuación ≤ 30% (ningún candidato es suficientemente similar)
+- Se generan entre 1 y 5 candidatos para revisión manual
+
+**Conflicto - Múltiples Candidatos:**
+Requiere revisión manual cuando:
+- El mejor candidato tiene puntuación > 30%, **PERO**
+- La diferencia con el segundo mejor es ≤ 20 puntos porcentuales
+- Hay varios candidatos con similitudes muy parecidas
 
 ---
 
@@ -191,10 +198,25 @@ Al final de la hoja aparecerá una sección en rojo con todos los movimientos ba
 
 ### ¿Qué es un Conflicto?
 
-Un conflicto ocurre cuando:
-- Varios movimientos bancarios tienen el mismo importe
-- Las puntuaciones de similitud son parecidas
-- El sistema no puede decidir automáticamente
+Un conflicto ocurre cuando el sistema no puede realizar una conciliación automática. Hay dos tipos:
+
+**⚠ Baja confianza:**
+- El mejor candidato tiene una puntuación inferior al umbral mínimo (por defecto 30%)
+- Indica que ninguno de los candidatos tiene suficiente similitud con el movimiento contable
+- El sistema no puede garantizar que la coincidencia sea correcta
+
+**⚠ Múltiples candidatos:**
+- El mejor candidato tiene buena puntuación (≥30%), pero
+- La diferencia con el segundo mejor candidato es muy pequeña (<20 puntos porcentuales)
+- Hay varios movimientos bancarios muy similares y el sistema no puede distinguir cuál es el correcto
+
+### Comportamiento de Conflictos en la Hoja "Salida"
+
+Los movimientos con conflictos aparecen con fondo amarillo y:
+- **Columna E (Estado)**: Muestra "⚠ Baja confianza" o "⚠ Múltiples candidatos"
+- **Columna F**: Muestra "N candidatos" (donde N es el número de candidatos disponibles)
+- **Columnas F-J (datos bancarios)**: Aparecen **vacías** - no se pre-selecciona ningún candidato
+- Requieren **revisión manual obligatoria** mediante el panel lateral
 
 ### Revisar Conflictos
 
@@ -202,8 +224,8 @@ Un conflicto ocurre cuando:
 2. Se abrirá un panel lateral con todos los conflictos
 3. Para cada movimiento contable verás:
    - Datos del movimiento contable
-   - Lista de candidatos bancarios ordenados por puntuación
-   - Puntuación de confianza (código de colores)
+   - Lista de todos los candidatos bancarios ordenados por puntuación
+   - Puntuación de confianza para cada candidato (código de colores)
 
 **Código de Colores de Puntuación:**
 - 🟢 **Verde**: ≥ 70% (alta confianza)
@@ -400,8 +422,16 @@ Para problemas técnicos o sugerencias de mejora:
 
 ---
 
-**Versión del Manual**: 1.0
-**Última Actualización**: 2024
+**Versión del Manual**: 1.1
+**Última Actualización**: Noviembre 2025
+
+### Registro de Cambios
+
+**v1.1 (Nov 2025):**
+- Aclaración sobre los dos tipos de conflictos: "Baja confianza" vs "Múltiples candidatos"
+- Actualizado comportamiento: conflictos ya no pre-seleccionan ningún candidato
+- Columnas bancarias (F-J) ahora aparecen vacías para todos los conflictos
+- Revisión manual obligatoria mediante panel lateral para ambos tipos de conflicto
 
 ---
 

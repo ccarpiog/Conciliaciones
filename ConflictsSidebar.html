@@ -357,6 +357,9 @@
       }
 
       let html = '<h3>Conflictos de Conciliación</h3>';
+      html += `<div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 10px; margin-bottom: 15px;">
+        <strong style="color: #856404;">Movimientos sugeridos para conciliar: ${conflicts.length}</strong>
+      </div>`;
       html += '<p style="font-size: 13px; color: #5f6368;">Seleccione el movimiento bancario correcto para cada movimiento contable:</p>';
 
       conflicts.forEach((conflict, index) => {

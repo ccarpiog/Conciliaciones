@@ -47,6 +47,8 @@ function onOpen() {
  * Used by sidebar to update sheet without triggering UI elements
  */
 function runReconciliationInternal() {
+  Logger.log('>> runReconciliationInternal: START');
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sourceSheet = ss.getSheetByName(CONFIG.SOURCE_SHEET);
   const outputSheet = ss.getSheetByName(CONFIG.OUTPUT_SHEET);
@@ -54,6 +56,8 @@ function runReconciliationInternal() {
   if (!sourceSheet || !outputSheet) {
     throw new Error('No se encontraron las hojas "Origen" o "Salida"');
   }
+
+  Logger.log('>> Sheets found: Origen and Salida');
 
   // Load user configuration
   const userProperties = PropertiesService.getUserProperties();
@@ -64,16 +68,31 @@ function runReconciliationInternal() {
   CONFIG.DATE_TOLERANCE_DAYS = dateToleranceDays;
   CONFIG.MIN_SIMILARITY_SCORE = minSimilarityScore;
 
+  Logger.log('>> Config - Date tolerance: ' + dateToleranceDays + ' days, Min similarity: ' + minSimilarityScore);
+
   // Get data from source sheet
+  Logger.log('>> Loading accounting data...');
   const accountingData = getAccountingData(sourceSheet);
+  Logger.log('>> Accounting data loaded: ' + accountingData.length + ' rows');
+
+  Logger.log('>> Loading bank data...');
   const bankData = getBankData(sourceSheet);
+  Logger.log('>> Bank data loaded: ' + bankData.length + ' rows');
 
   // Perform reconciliation
+  Logger.log('>> Starting reconciliation...');
   const reconciliationResults = reconcileMovements(accountingData, bankData);
+  Logger.log('>> Reconciliation complete - Matched: ' + reconciliationResults.matched.length +
+             ', Conflicts: ' + reconciliationResults.conflicts.length +
+             ', Unmatched Accounting: ' + reconciliationResults.unmatchedAccounting.length +
+             ', Unmatched Bank: ' + reconciliationResults.unmatchedBank.length);
 
   // Output results
+  Logger.log('>> Writing results to output sheet...');
   outputReconciliationResults(outputSheet, reconciliationResults);
+  Logger.log('>> Results written successfully');
 
+  Logger.log('>> runReconciliationInternal: END');
   return reconciliationResults;
 }
 
@@ -83,15 +102,27 @@ function runReconciliationInternal() {
  */
 function runReconciliation() {
   try {
+    Logger.log('=== START runReconciliation ===');
+    const startTime = new Date();
+    Logger.log('Start time: ' + startTime.toISOString());
+
     const reconciliationResults = runReconciliationInternal();
+
+    const endTime = new Date();
+    const duration = (endTime - startTime) / 1000;
+    Logger.log('Reconciliation completed in ' + duration + ' seconds');
 
     // Show summary
     showReconciliationSummary(reconciliationResults);
 
     // Automatically open conflicts sidebar to show results
     showConflictsSidebar();
+
+    Logger.log('=== END runReconciliation ===');
   } catch (error) {
-    SpreadsheetApp.getUi().alert('Error: ' + error.message);
+    Logger.log('ERROR in runReconciliation: ' + error.toString());
+    Logger.log('Error stack: ' + error.stack);
+    SpreadsheetApp.getUi().alert('Error: ' + error.message + '\n\nRevise el registro de ejecución (View > Logs) para más detalles.');
   }
 }
 
@@ -582,29 +613,37 @@ function levenshteinDistance(str1, str2) {
  * Outputs reconciliation results to the output sheet
  */
 function outputReconciliationResults(sheet, results) {
-  // Clear existing content
-  sheet.clear();
+  Logger.log('>>> outputReconciliationResults: START');
+  const startTime = new Date();
+  let currentRow = 4; // Declare at function scope for error logging
 
-  // Set up headers - write separately to avoid dimension mismatch
-  const numColumns = 10;
+  try {
+    // Clear existing content
+    Logger.log('>>> Clearing sheet...');
+    sheet.clear();
 
-  // Title row
-  sheet.getRange(1, 1, 1, numColumns).merge()
-    .setValue('MOVIMIENTOS CONCILIADOS')
-    .setBackground('#4a86e8')
-    .setFontColor('#ffffff')
-    .setFontWeight('bold')
-    .setHorizontalAlignment('center');
+    // Set up headers - write separately to avoid dimension mismatch
+    const numColumns = 10;
 
-  // Column headers
-  sheet.getRange(2, 1, 1, numColumns).setValues([[
-    'Fecha Cont.', 'Asiento', 'Concepto Cont.', 'Importe', 'Estado',
-    'Fecha Banco', 'Fecha Valor', 'Concepto Banco', 'Datos Adic.', 'Puntuación'
-  ]])
-    .setBackground('#c9daf8')
-    .setFontWeight('bold');
+    // Title row
+    Logger.log('>>> Writing title row...');
+    const titleRange = sheet.getRange(1, 1, 1, numColumns);
+    titleRange.merge();
+    titleRange.setValue('MOVIMIENTOS CONCILIADOS');
+    titleRange.setBackground('#4a86e8');
+    titleRange.setFontColor('#ffffff');
+    titleRange.setFontWeight('bold');
+    titleRange.setHorizontalAlignment('center');
 
-  let currentRow = 4;
+    // Column headers
+    Logger.log('>>> Writing column headers...');
+    const headerRange = sheet.getRange(2, 1, 1, numColumns);
+    headerRange.setValues([[
+      'Fecha Cont.', 'Asiento', 'Concepto Cont.', 'Importe', 'Estado',
+      'Fecha Banco', 'Fecha Valor', 'Concepto Banco', 'Datos Adic.', 'Puntuación'
+    ]]);
+    headerRange.setBackground('#c9daf8');
+    headerRange.setFontWeight('bold');
 
   // Combine and sort all movements
   const allMovements = [];
@@ -697,8 +736,10 @@ function outputReconciliationResults(sheet, results) {
   });
 
   // Output sorted movements - BATCH WRITE for performance
+  Logger.log('>>> Processing ' + allMovements.length + ' total movements for output');
   if (allMovements.length > 0) {
     // Build data and background color arrays
+    Logger.log('>>> Building movement data arrays...');
     const movementData = [];
     const movementBackgrounds = [];
 
@@ -730,33 +771,44 @@ function outputReconciliationResults(sheet, results) {
     });
 
     // Write all data in ONE operation
+    Logger.log('>>> Writing ' + movementData.length + ' rows of movement data to sheet...');
     sheet.getRange(currentRow, 1, movementData.length, numColumns).setValues(movementData);
 
     // Apply all backgrounds in ONE operation
+    Logger.log('>>> Applying background colors to ' + movementBackgrounds.length + ' rows...');
     sheet.getRange(currentRow, 1, movementBackgrounds.length, numColumns).setBackgrounds(movementBackgrounds);
 
     currentRow += allMovements.length;
+    Logger.log('>>> Movement data written. Current row: ' + currentRow);
   }
 
   // Add summary section for unmatched bank movements
+  Logger.log('>>> Processing unmatched bank movements: ' + results.unmatchedBank.length);
   if (results.unmatchedBank.length > 0) {
     currentRow += 2;
-    sheet.getRange(currentRow, 1, 1, 5)
-      .merge()
-      .setValue('MOVIMIENTOS BANCARIOS NO CONCILIADOS')
-      .setBackground('#ea4335')
-      .setFontColor('#ffffff')
-      .setFontWeight('bold')
-      .setHorizontalAlignment('center');
-    currentRow++;
+    Logger.log('>>> Writing unmatched bank movements section at row ' + currentRow);
 
-    sheet.getRange(currentRow, 1, 1, 5).setValues([
-      ['Fecha Mov.', 'Fecha Valor', 'Concepto', 'Datos Adic.', 'Importe']
-    ]).setBackground('#f4cccc').setFontWeight('bold');
-    currentRow++;
+    // Add a delay to let API recover from previous operations
+    Utilities.sleep(1000); // 1 second delay
 
-    // BATCH WRITE for unmatched bank movements
-    if (results.unmatchedBank.length > 0) {
+    try {
+      // Prepare all data including headers
+      const unmatchedTitleRow = currentRow;
+      const unmatchedHeaderRow = currentRow + 1;
+      const unmatchedDataStartRow = currentRow + 2;
+
+      // Write title text only
+      Logger.log('>>> Writing unmatched title at row ' + unmatchedTitleRow);
+      sheet.getRange(unmatchedTitleRow, 1).setValue('MOVIMIENTOS BANCARIOS NO CONCILIADOS');
+
+      // Write header row
+      Logger.log('>>> Writing unmatched header at row ' + unmatchedHeaderRow);
+      sheet.getRange(unmatchedHeaderRow, 1, 1, 5).setValues([
+        ['Fecha Mov.', 'Fecha Valor', 'Concepto', 'Datos Adic.', 'Importe']
+      ]);
+
+      // Write data
+      Logger.log('>>> Writing ' + results.unmatchedBank.length + ' unmatched bank rows...');
       const bankData = results.unmatchedBank.map(bank => [
         formatDate(bank.date),
         bank.valueDate ? formatDate(bank.valueDate) : '',
@@ -764,17 +816,62 @@ function outputReconciliationResults(sheet, results) {
         bank.additional,
         bank.amount
       ]);
+      sheet.getRange(unmatchedDataStartRow, 1, bankData.length, 5).setValues(bankData);
 
-      sheet.getRange(currentRow, 1, bankData.length, 5).setValues(bankData);
-      currentRow += bankData.length;
+      // Now apply formatting in batch operations
+      Logger.log('>>> Applying formatting to unmatched bank section...');
+      Utilities.sleep(500);
+
+      // Format title row
+      const unmatchedTitleRange = sheet.getRange(unmatchedTitleRow, 1, 1, 5);
+      unmatchedTitleRange.merge();
+      unmatchedTitleRange.setBackground('#ea4335');
+      unmatchedTitleRange.setFontColor('#ffffff');
+      unmatchedTitleRange.setFontWeight('bold');
+      unmatchedTitleRange.setHorizontalAlignment('center');
+
+      // Format header row
+      const unmatchedHeaderRange = sheet.getRange(unmatchedHeaderRow, 1, 1, 5);
+      unmatchedHeaderRange.setBackground('#f4cccc');
+      unmatchedHeaderRange.setFontWeight('bold');
+
+      currentRow = unmatchedDataStartRow + bankData.length;
+      Logger.log('>>> Unmatched bank section complete. Current row: ' + currentRow);
+    } catch (unmatchedError) {
+      Logger.log('>>> ERROR writing unmatched bank section: ' + unmatchedError.toString());
+      // Try to continue without formatting
+      currentRow += 2 + results.unmatchedBank.length;
     }
   }
 
-  // Auto-resize columns
-  sheet.autoResizeColumns(1, 10);
+  // Set fixed column widths (much faster than auto-resize for large datasets)
+  Logger.log('>>> Setting column widths...');
 
-  // Set column A width to 100 pixels
-  sheet.setColumnWidth(1, 100);
+  // Add delay before column width operations
+  Utilities.sleep(500);
+
+  // Set widths individually (Google Sheets API doesn't support batch width setting)
+  const columnWidths = [100, 80, 250, 100, 150, 100, 100, 250, 150, 100];
+  try {
+    columnWidths.forEach((width, index) => {
+      sheet.setColumnWidth(index + 1, width);
+    });
+    Logger.log('>>> Column widths set');
+  } catch (widthError) {
+    Logger.log('>>> Warning: Could not set column widths: ' + widthError.toString());
+    // Non-critical error, continue execution
+  }
+
+  const endTime = new Date();
+  const totalDuration = (endTime - startTime) / 1000;
+  Logger.log('>>> outputReconciliationResults: END (took ' + totalDuration + ' seconds)');
+
+  } catch (error) {
+    Logger.log('>>> ERROR in outputReconciliationResults: ' + error.toString());
+    Logger.log('>>> Error stack: ' + error.stack);
+    Logger.log('>>> Error occurred at currentRow: ' + currentRow);
+    throw error; // Re-throw to be caught by caller
+  }
 }
 
 /**

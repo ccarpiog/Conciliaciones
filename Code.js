@@ -43,16 +43,16 @@ function onOpen() {
 }
 
 /**
- * Main reconciliation function
+ * Internal reconciliation function without UI actions
+ * Used by sidebar to update sheet without triggering UI elements
  */
-function runReconciliation() {
+function runReconciliationInternal() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sourceSheet = ss.getSheetByName(CONFIG.SOURCE_SHEET);
   const outputSheet = ss.getSheetByName(CONFIG.OUTPUT_SHEET);
 
   if (!sourceSheet || !outputSheet) {
-    SpreadsheetApp.getUi().alert('Error: No se encontraron las hojas "Origen" o "Salida"');
-    return;
+    throw new Error('No se encontraron las hojas "Origen" o "Salida"');
   }
 
   // Load user configuration
@@ -74,11 +74,25 @@ function runReconciliation() {
   // Output results
   outputReconciliationResults(outputSheet, reconciliationResults);
 
-  // Show summary
-  showReconciliationSummary(reconciliationResults);
+  return reconciliationResults;
+}
 
-  // Automatically open conflicts sidebar to show results
-  showConflictsSidebar();
+/**
+ * Main reconciliation function
+ * Called from menu - shows UI elements (summary and sidebar)
+ */
+function runReconciliation() {
+  try {
+    const reconciliationResults = runReconciliationInternal();
+
+    // Show summary
+    showReconciliationSummary(reconciliationResults);
+
+    // Automatically open conflicts sidebar to show results
+    showConflictsSidebar();
+  } catch (error) {
+    SpreadsheetApp.getUi().alert('Error: ' + error.message);
+  }
 }
 
 /**
@@ -793,54 +807,87 @@ function showReconciliationSummary(results) {
  * Shows conflicts sidebar for manual resolution
  */
 function showConflictsSidebar() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const outputSheet = ss.getSheetByName(CONFIG.OUTPUT_SHEET);
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // Check if reconciliation has been run (output sheet has content beyond row 1)
-  if (!outputSheet || outputSheet.getLastRow() <= 1) {
+    if (!ss) {
+      SpreadsheetApp.getUi().alert(
+        'Error de acceso',
+        'No se pudo acceder a la hoja de cálculo. Por favor, intente cerrar y volver a abrir el documento.',
+        SpreadsheetApp.getUi().ButtonSet.OK
+      );
+      return;
+    }
+
+    const outputSheet = ss.getSheetByName(CONFIG.OUTPUT_SHEET);
+
+    // Check if reconciliation has been run (output sheet has content beyond row 1)
+    if (!outputSheet || outputSheet.getLastRow() <= 1) {
+      SpreadsheetApp.getUi().alert(
+        'Conciliación no ejecutada',
+        'Debe ejecutar "Ejecutar conciliación automática" antes de revisar conflictos.',
+        SpreadsheetApp.getUi().ButtonSet.OK
+      );
+      return;
+    }
+
+    const html = HtmlService.createHtmlOutputFromFile('ConflictsSidebar')
+      .setTitle('Resolver Conflictos')
+      .setWidth(400);
+
+    SpreadsheetApp.getUi().showSidebar(html);
+  } catch (error) {
+    Logger.log('Error in showConflictsSidebar: ' + error.toString());
     SpreadsheetApp.getUi().alert(
-      'Conciliación no ejecutada',
-      'Debe ejecutar "Ejecutar conciliación automática" antes de revisar conflictos.',
+      'Error',
+      'Error al abrir la barra lateral: ' + error.message + '\n\nPor favor, intente:\n1. Ejecutar "Ejecutar conciliación automática" primero\n2. Reautorizar el script desde el editor (Extensions > Apps Script)',
       SpreadsheetApp.getUi().ButtonSet.OK
     );
-    return;
   }
-
-  const html = HtmlService.createHtmlOutputFromFile('ConflictsSidebar')
-    .setTitle('Resolver Conflictos')
-    .setWidth(400);
-
-  SpreadsheetApp.getUi().showSidebar(html);
 }
 
 /**
  * Gets conflicts data for sidebar
  */
 function getConflictsData() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sourceSheet = ss.getSheetByName(CONFIG.SOURCE_SHEET);
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  const accountingData = getAccountingData(sourceSheet);
-  const bankData = getBankData(sourceSheet);
-  const results = reconcileMovements(accountingData, bankData);
+    if (!ss) {
+      throw new Error('No se pudo acceder a la hoja de cálculo activa');
+    }
 
-  return results.conflicts.map(conflict => ({
-    accounting: {
-      id: conflict.accounting.id,
-      date: formatDate(conflict.accounting.date),
-      entry: conflict.accounting.entryNumber,
-      concept: conflict.accounting.concept,
-      amount: conflict.accounting.amount
-    },
-    candidates: conflict.candidates.map(c => ({
-      id: c.bankMovement.id,
-      date: formatDate(c.bankMovement.date),
-      concept: c.bankMovement.concept,
-      additional: c.bankMovement.additional,
-      amount: c.bankMovement.amount,
-      score: Math.round(c.score * 100)
-    }))
-  }));
+    const sourceSheet = ss.getSheetByName(CONFIG.SOURCE_SHEET);
+
+    if (!sourceSheet) {
+      throw new Error('No se encontró la hoja "' + CONFIG.SOURCE_SHEET + '"');
+    }
+
+    const accountingData = getAccountingData(sourceSheet);
+    const bankData = getBankData(sourceSheet);
+    const results = reconcileMovements(accountingData, bankData);
+
+    return results.conflicts.map(conflict => ({
+      accounting: {
+        id: conflict.accounting.id,
+        date: formatDate(conflict.accounting.date),
+        entry: conflict.accounting.entryNumber,
+        concept: conflict.accounting.concept,
+        amount: conflict.accounting.amount
+      },
+      candidates: conflict.candidates.map(c => ({
+        id: c.bankMovement.id,
+        date: formatDate(c.bankMovement.date),
+        concept: c.bankMovement.concept,
+        additional: c.bankMovement.additional,
+        amount: c.bankMovement.amount,
+        score: Math.round(c.score * 100)
+      }))
+    }));
+  } catch (error) {
+    Logger.log('Error in getConflictsData: ' + error.toString());
+    throw new Error('Error al cargar los conflictos: ' + error.message);
+  }
 }
 
 /**

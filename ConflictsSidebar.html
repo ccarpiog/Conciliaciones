@@ -459,7 +459,7 @@
               setTimeout(refreshConflicts, 1500);
             })
             .withFailureHandler(showError)
-            .runReconciliation();
+            .runReconciliationInternal();
         })
         .withFailureHandler((error) => {
           showError(error);
@@ -525,7 +525,7 @@
                     showError('Error al actualizar la hoja: ' + error.toString());
                     setTimeout(refreshConflicts, 2000);
                   })
-                  .runReconciliation();
+                  .runReconciliationInternal();
               } else {
                 // Batch operation failed - show error and reload conflicts
                 showError(result.message || 'Error al aplicar conciliaciones');
